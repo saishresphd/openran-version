@@ -509,8 +509,11 @@ fi
     dl_bi = idx_of("dl_brate"); ul_bi = idx_of("ul_brate")
     traffic_rows = []
     for r in rows:
-        dl_b = float(r[dl_bi]) if dl_bi is not None and dl_bi < len(r) else 0.0
-        ul_b = float(r[ul_bi]) if ul_bi is not None and ul_bi < len(r) else 0.0
+        def _to_f(val):
+            try: return float(val) if val else 0.0
+            except (ValueError, TypeError): return 0.0
+        dl_b = _to_f(r[dl_bi]) if dl_bi is not None and dl_bi < len(r) else 0.0
+        ul_b = _to_f(r[ul_bi]) if ul_bi is not None and ul_bi < len(r) else 0.0
         if dl_b > 0 or ul_b > 0: traffic_rows.append(r)
 
     dl_mcs   = col_vals("dl_mcs", src=traffic_rows)
