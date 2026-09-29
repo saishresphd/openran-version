@@ -70,7 +70,7 @@ GNB_LOG_DIR  = "/tmp/gnb_logs_v23"
 GNB_GTP_BASE = "10.10.2"   # gtp_bind_addr = 10.10.2.{n}
 GNB_LAN_IF   = "enp4s0f1"  # physical LAN interface on pc802
 
-ATTACH_TIMEOUT = 120    # seconds — give extra time for slow attaches
+ATTACH_TIMEOUT = 75      # seconds — default 75s attach timeout
 PING_COUNT     = 20
 PING_SETTLE_S  = 5      # wait after injecting default route before pinging
 DL_RATES = list(range(1, 11)) + list(range(15, 51, 5))   # 18 rates

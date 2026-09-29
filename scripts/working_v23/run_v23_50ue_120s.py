@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-run_v22_50ue.py — v22.10 50-UE accumulation experiment on POWDER.
+run_v23_50ue.py — v23.11 50-UE accumulation experiment on POWDER.
 ================================================================
 Node mapping:
   core    = pc808   10.10.1.1   Open5GS EPC (MME+SGW+UPF)
@@ -8,16 +8,16 @@ Node mapping:
   uehost1 = pc801   10.10.1.4   srsue  — one process per UE
 
 Config paths (installed on nodes):
-  gNB:  /etc/srsenb_v22/enb_ue{n}.conf
+  gNB:  /etc/srsenb_v23/enb_ue{n}.conf
         ZMQ tx=tcp://*:4{nn}0  rx=tcp://10.10.1.4:4{nn}1
-  UE:   /etc/srsue_v22/ue{n}.conf
+  UE:   /etc/srsue_v23/ue{n}.conf
         netns=ue{n}  tun=tun_ue{n}
 
 Port formula: UE n → base_port = 40000 + n*10
   gNB tx = base_port     (DL to UE)
   gNB rx = base_port + 1 (UL from UE)
 
-Output: results/ver_eval/v22_10/ue_results_50.csv  — 170-column full schema
+Output: results/ver_eval/v23_11/ue_results_50.csv  — 170-column full schema
   - 18 DL + 18 UL rates (1-10, 15,20,...,50 Mbps) + loss_pct
   - RAN params (mcs, brate, prb, tbs, bler, cqi, sinr, phr, nof_ue, system_load)
   - turbostat: 18 columns
@@ -56,12 +56,12 @@ GNB_HOST = "saish@pc802.emulab.net"
 UE_HOST  = "saish@pc801.emulab.net"
 CORE_HOST= "saish@pc808.emulab.net"
 
-SRSENB_BIN   = "/opt/srsRAN_src/build/srsenb/src/srsenb"
-SRSUE_BIN    = "/opt/srsRAN_src/build/srsue/src/srsue"
-ENB_CONF_DIR = "/etc/srsenb_v22"
-UE_CONF_DIR  = "/etc/srsue_v22"
-UE_LOG_DIR   = "/tmp/ue_logs"
-GNB_LOG_DIR  = "/tmp/gnb_logs"
+SRSENB_BIN   = "/opt/srsRAN_v23/build/srsenb/src/srsenb"
+SRSUE_BIN    = "/opt/srsRAN_v23/build/srsue/src/srsue"
+ENB_CONF_DIR = "/etc/srsenb_v23"
+UE_CONF_DIR  = "/etc/srsue_v23"
+UE_LOG_DIR   = "/tmp/ue_logs_v23"
+GNB_LOG_DIR  = "/tmp/gnb_logs_v23"
 
 # GTP fix: each srsenb binds to a unique IP alias on enp4s0f1 so SGW-U
 # delivers DL GTP packets to the correct process (not a random one of 50).
@@ -70,7 +70,7 @@ GNB_LOG_DIR  = "/tmp/gnb_logs"
 GNB_GTP_BASE = "10.10.2"   # gtp_bind_addr = 10.10.2.{n}
 GNB_LAN_IF   = "enp4s0f1"  # physical LAN interface on pc802
 
-ATTACH_TIMEOUT = 75      # seconds — default 75s attach timeout
+ATTACH_TIMEOUT = 120     # seconds — extended 120s attach timeout
 PING_COUNT     = 20
 PING_SETTLE_S  = 5      # wait after injecting default route before pinging
 DL_RATES = list(range(1, 11)) + list(range(15, 51, 5))   # 18 rates
@@ -80,7 +80,7 @@ MAX_UE         = 50
 MEASURE_FROM   = 1      # Measure all UEs from 1 to 50
 CORE_IP        = "10.45.0.1"
 
-OUT_DIR  = pathlib.Path("results/ver_eval/v22_10")
+OUT_DIR  = pathlib.Path("results/ver_eval/v23_11")
 OUT_FILE = OUT_DIR / "ue_results_50.csv"
 
 SSH_ARGS = ["-i", KEY,
@@ -237,7 +237,7 @@ def setup_gtp_aliases(max_n=50):
     patch_script = (
         f"for n in $(seq 1 {max_n}); do "
         f"  sudo sed -i \"s/^gtp_bind_addr.*/gtp_bind_addr = {GNB_GTP_BASE}.$n/\" "
-        f"  /etc/srsenb_v22/enb_ue${{n}}.conf 2>/dev/null; "
+        f"  /etc/srsenb_v23/enb_ue${{n}}.conf 2>/dev/null; "
         f"done; "
         f"echo patched"
     )
@@ -744,7 +744,7 @@ fi
 # ── PHY metrics from srsue metrics CSV ───────────────────────────────────────
 def snap_ue_phy(n):
     """
-    Parse the last 30 rows of /tmp/ue_logs/ue{n}_metrics.csv on pc801 and
+    Parse the last 30 rows of /tmp/ue_logs_v23/ue{n}_metrics.csv on pc801 and
     average all PHY fields to produce the phy_* columns.
 
     srsue metrics CSV columns (comma-separated):
@@ -1163,7 +1163,7 @@ def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"\n{'#'*62}")
-    print(f"  v22.10  50-UE Accumulation Experiment")
+    print(f"  v23.11  50-UE Accumulation Experiment")
     print(f"  gnb1=pc802  uehost1=pc801  core=pc808")
     print(f"  Output: {OUT_FILE}")
     print(f"{'#'*62}\n")
@@ -1277,7 +1277,7 @@ def main():
     print(f"{'='*62}")
 
     def append_row(row_dict):
-        desk_file = os.path.expanduser("~/Desktop/v22_10_ue_results_50.csv")
+        desk_file = os.path.expanduser("~/Desktop/v23_11_ue_results_50.csv")
         with open(OUT_FILE, "a", newline="") as f:
             w = csv.DictWriter(f, fieldnames=FIELDS, extrasaction="ignore")
             w.writerow(row_dict)
@@ -1289,7 +1289,7 @@ def main():
             pass
 
     for n in range(measure_from, MAX_UE + 1):
-        row = {"ver": "v22_10", "ue_id": n, "n_attached": n_attached}
+        row = {"ver": "v23_11", "ue_id": n, "n_attached": n_attached}
 
         print(f"\n{'='*62}")
         print(f"  UE {n:2d}/50  [{time.strftime('%H:%M:%S')}]"
@@ -1459,7 +1459,7 @@ def main():
 
     # ── Done ──────────────────────────────────────────────────────────────────
     print(f"\n{'#'*62}")
-    print(f"  v22.10 experiment complete!")
+    print(f"  v23.11 experiment complete!")
     with open(OUT_FILE, newline="") as fh:
         total = sum(1 for _ in csv.DictReader(fh))
     print(f"  Rows in CSV: {total} / {MAX_UE}")

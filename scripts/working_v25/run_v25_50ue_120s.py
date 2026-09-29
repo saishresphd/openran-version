@@ -28,7 +28,7 @@ GNB_LOG_DIR  = "/tmp/gnb_logs_v25"
 GNB_GTP_BASE = "10.10.2"
 GNB_LAN_IF   = "enp4s0f1"
 
-ATTACH_TIMEOUT = 75
+ATTACH_TIMEOUT = 120
 PING_COUNT     = 20
 PING_SETTLE_S  = 5
 DL_RATES = list(range(1, 11)) + list(range(15, 51, 5))
