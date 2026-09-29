@@ -94,6 +94,11 @@ if csv_path.exists():
     csv_path.unlink()
     print(f"\n  CSV deleted — experiment will start fresh from UE1")
 
+desk_path = pathlib.Path(os.path.expanduser("~/Desktop/v23_11_ue_results_50.csv"))
+if desk_path.exists():
+    desk_path.unlink()
+    print(f"  Desktop CSV deleted")
+
 print("\n" + "=" * 60)
 print("  CLEAN SLATE DONE — launching v23.11 experiment")
 print("=" * 60)

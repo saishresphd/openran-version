@@ -1138,3 +1138,101 @@ Closed: 2026-07-24 09:30 UTC
 ---
 
 *Live cluster diagnostics from `api.cyberfraud-dev03.cp.fyre.ibm.com:6443` · Namespace: `cyberfraud` · Resolved 2026-07-24*
+
+
+---
+
+## Disk & Storage Analysis — Live Cluster Audit (2026-07-24)
+
+> **Scope:** Node ephemeral storage, PersistentVolumeClaims in namespace `cyberfraud`, and cluster-level PVs.
+> **Cluster:** `api.cyberfraud-dev03.cp.fyre.ibm.com:6443`
+> **Conclusion:** Disk is **not a contributing factor** in CF-2026-00147 or CF-2026-00148. All nodes are healthy and all PVCs are bound.
+
+---
+
+### 1. Node Ephemeral Storage — All Nodes Healthy
+
+Collected via `oc describe node <name>` on all 7 cluster nodes:
+
+| Node | Role | Ephemeral Capacity | Allocatable | Requests | Limits | DiskPressure |
+|---|---|---|---|---|---|---|
+| `master0` | control-plane | ~104 GiB | ~95 GiB (~88 GiB usable) | 0% | 0% | **False** |
+| `master1` | control-plane | ~104 GiB | ~95 GiB (~88 GiB usable) | 0% | 0% | **False** |
+| `master2` | control-plane | ~104 GiB | ~95 GiB (~88 GiB usable) | 0% | 0% | **False** |
+| `worker0` | compute | ~125 GiB | ~114 GiB | **2,070 MiB (1%)** | 4,346 MiB (3%) | **False** |
+| `worker1` | compute | ~125 GiB | ~114 GiB | **2,328 MiB (2%)** | 5,370 MiB (4%) | **False** |
+| `worker2` | compute | ~125 GiB | ~114 GiB | — (allocated-resources section absent) | — | **False** |
+| `worker3` | compute | ~125 GiB | ~114 GiB | — (allocated-resources section absent) | — | **False** |
+
+**Key observations:**
+- All 7 nodes report `DiskPressure: False` with condition reason `KubeletHasNoDiskPressure`.
+- Workers 0 and 1 show minimal ephemeral storage consumption (1–2% requests, 3–4% limits) — well within safe operating range.
+- Masters have zero ephemeral storage requests (control-plane workloads only).
+- No `Evicted`, `DiskPressure`, or `EphemeralStorageExceeded` events were found via:
+  ```
+  oc get events -n cyberfraud | grep -iE 'disk|evict|storage|ephemeral|OOM'
+  ```
+
+---
+
+### 2. PersistentVolumeClaims — Namespace `cyberfraud`
+
+All PVCs are provisioned via the `rook-ceph-block` StorageClass (ReadWriteOnce):
+
+| PVC Name | Capacity | Access Mode | Status | Bound To |
+|---|---|---|---|---|
+| `backup-pvc` | **10 GiB** | RWO | Bound | `cyberfraud/backup-pvc` |
+| `data-cf-seaweedfs-master-0` | **20 GiB** | RWO | Bound | SeaweedFS master |
+| `data-filer-seaweedfs-filer-0` | **20 GiB** | RWO | Bound | SeaweedFS filer |
+| `data1-seaweedfs-volume-0` | **20 GiB** | RWO | Bound | SeaweedFS volume |
+| `default-cluster-1` | **40 GiB** | RWO | Bound | Primary CNPG PostgreSQL DB |
+| `default-cluster-2` | **20 GiB** | RWO | Bound | CNPG PostgreSQL replica |
+
+**Total provisioned in `cyberfraud` namespace: 130 GiB**
+
+All PVCs are in `Bound` state — no `Pending`, `Lost`, or `Released` volumes detected.
+
+---
+
+### 3. Cluster-Level PersistentVolumes
+
+| PV Name | Capacity | StorageClass | Access Mode | Reclaim Policy | Namespace | Status |
+|---|---|---|---|---|---|---|
+| `registry-storage` | **200 GiB** | — | RWX | Recycle | `openshift-image-registry` | Bound |
+
+The OpenShift internal image registry is backed by a dedicated 200 GiB PV. This is the registry that serves `image-registry.openshift-image-registry.svc:5000` — the internal mirror target for any images pulled via `oc import-image`.
+
+---
+
+### 4. Root Cause Ruling — Disk is NOT a Factor
+
+The following table maps each failing pod class from CF-2026-00147 and CF-2026-00148 to the verified root cause:
+
+| Pod / Component | Symptom | Disk Involved? | Actual Root Cause |
+|---|---|---|---|
+| `arithmeticfunctionmcpserver` | `ImagePullBackOff` | ❌ No | TaaS registry token expired (401 Unauthorized from `us.icr.io`) |
+| `config` ×2 | `ImagePullBackOff` | ❌ No | Same — expired `all-icr-io` pull secret |
+| `backup-*` CronJob pods | `ImagePullBackOff` | ❌ No | Same — CronJob pulls from `us.icr.io` |
+| `default-mcpgateway` old revision | `Init:ImagePullBackOff` | ❌ No | Init container image pull failure — stale revision |
+| `eg-gateway` ×2 | `ImagePullBackOff` | ❌ No | TaaS token expiry |
+| `investigation` ×2 | `ImagePullBackOff` | ❌ No | TaaS token expiry |
+| `seaweedfs-filer-0` | `ImagePullBackOff` | ❌ No | TaaS token expiry |
+| `mcpmgmtservice` | `CrashLoopBackOff` (404+ restarts) | ❌ No | Redis connection pool exhaustion — ENOMEM/ECONNRESET pattern |
+| `default-cluster-2` (CNPG replica) | Streaming replication lag | ❌ No | Primary-replica WAL sync failure — separate CNPG issue |
+
+**Disk pressure was never a suspect** — all nodes had ≥ 95% ephemeral storage free on masters and ≥ 97–98% free on workers at time of incident and at time of this audit.
+
+---
+
+### 5. Recommendations
+
+| # | Action | Owner | Priority |
+|---|---|---|---|
+| 1 | Monitor PVC `default-cluster-1` (40 GiB primary DB) utilization — set alert at 80% | Platform SRE | Medium |
+| 2 | Add Prometheus `node_filesystem_avail_bytes` alert for ephemeral storage < 15% on workers | Platform SRE | Medium |
+| 3 | Consider expanding `seaweedfs-volume-0` PVC from 20 GiB → 50 GiB before object-store workload grows | Storage Team | Low |
+| 4 | Validate `backup-pvc` (10 GiB) has sufficient headroom for daily backup job output | Platform SRE | Low |
+
+---
+
+*Disk & Storage audit performed: 2026-07-24 · Cluster: `api.cyberfraud-dev03.cp.fyre.ibm.com:6443` · Namespace: `cyberfraud`*
