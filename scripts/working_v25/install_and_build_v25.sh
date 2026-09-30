@@ -14,12 +14,11 @@ sudo apt install -y \
 
 echo "=== Cloning and Checking out release_25_10 ==="
 sudo rm -rf /opt/srsRAN_v25
-sudo git clone https://github.com/srsran/srsRAN_4G.git /opt/srsRAN_v25 || \
-sudo git clone https://github.com/srsran/srsRAN_Project.git /opt/srsRAN_v25
+sudo git clone https://github.com/srsran/srsRAN_4G.git /opt/srsRAN_v25
 cd /opt/srsRAN_v25
-sudo git checkout release_25_10 2>/dev/null || true
+sudo git checkout release_25_10
 
-echo "=== Building srsRAN with ZMQ ==="
+echo "=== Building srsRAN v25.10 with ZMQ ==="
 sudo mkdir -p build && cd build
 sudo cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
@@ -27,6 +26,9 @@ sudo cmake .. \
   -DENABLE_ZMQ=ON \
   -DENABLE_UHD=OFF
 
-sudo make -j$(nproc) || true
+sudo make -j$(nproc) srsenb srsue srsran_rf_zmq
 
-echo "✓ Build complete in /opt/srsRAN_v25/build"
+echo "=== Verifying ==="
+./srsenb/src/srsenb --version || true
+./srsue/src/srsue --version || true
+echo "✓ srsRAN v25.10 built successfully at /opt/srsRAN_v25/build"

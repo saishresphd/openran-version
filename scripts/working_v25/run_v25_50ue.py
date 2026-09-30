@@ -10,7 +10,13 @@ Node mapping:
 Output: results/ver_eval/v25_10/ue_results_50.csv — 170-column full schema
 """
 
-import subprocess, time, csv, os, re, json, pathlib, hashlib, shutil, signal, threading
+import subprocess, time, csv, os, re, json, pathlib, hashlib, shutil, signal, threading, sys, functools
+
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+print = functools.partial(print, flush=True)
 
 # ── Node config ───────────────────────────────────────────────────────────────
 KEY      = os.path.expanduser("~/.ssh/id_ed25519")
@@ -28,7 +34,7 @@ GNB_LOG_DIR  = "/tmp/gnb_logs_v25"
 GNB_GTP_BASE = "10.10.2"
 GNB_LAN_IF   = "enp4s0f1"
 
-ATTACH_TIMEOUT = 75
+ATTACH_TIMEOUT = 600
 PING_COUNT     = 20
 PING_SETTLE_S  = 5
 DL_RATES = list(range(1, 11)) + list(range(15, 51, 5))
@@ -103,32 +109,42 @@ def start_gnb_ue(n):
     log     = f"{GNB_LOG_DIR}/enb_ue{n}.log"
     met_csv = f"{GNB_LOG_DIR}/enb_ue{n}_metrics.csv"
     rpt_j   = f"{GNB_LOG_DIR}/enb_ue{n}_report.json"
-    cmd = (f"mkdir -p {GNB_LOG_DIR} && "
-           f"nohup sudo {SRSENB_BIN} {conf} "
-           f"--expert.metrics_csv_filename={met_csv} "
-           f"--expert.metrics_json_filename={rpt_j} "
-           f"> {log} 2>&1 &")
-    ssh(GNB_HOST, cmd, timeout=10)
+    ssh(GNB_HOST,
+        f"mkdir -p {GNB_LOG_DIR} && rm -f {log} {met_csv} {rpt_j}",
+        timeout=10)
+    ssh_bg(GNB_HOST,
+           f"sudo {SRSENB_BIN} {conf}"
+           f" --expert.metrics_csv_enable=1"
+           f" --expert.metrics_csv_filename={met_csv}"
+           f" --expert.metrics_period_secs=1"
+           f" --expert.report_json_enable=1"
+           f" --expert.report_json_filename={rpt_j}"
+           f" >> {log} 2>&1")
 
 
 def start_srsue(n):
     conf    = f"{UE_CONF_DIR}/ue{n}.conf"
     log     = f"{UE_LOG_DIR}/ue{n}.log"
     met_csv = f"{UE_LOG_DIR}/ue{n}_metrics.csv"
-    cmd = (f"mkdir -p {UE_LOG_DIR} /tmp/ue_ctx/ue{n} && "
-           f"sudo ip netns add ue{n} 2>/dev/null || true; "
-           f"nohup sudo ip netns exec ue{n} {SRSUE_BIN} {conf} "
-           f"--general.metrics_csv_filename={met_csv} "
-           f"--nas.ctx_dir=/tmp/ue_ctx/ue{n} "
-           f"> {log} 2>&1 &")
-    ssh(UE_HOST, cmd, timeout=10)
+    ctx_dir = f"/tmp/ue_ctx/ue{n}"
+    ssh(UE_HOST,
+        f"mkdir -p {UE_LOG_DIR} {ctx_dir} && "
+        f"rm -f {log} {met_csv} {ctx_dir}/.ctxt /users/saish/.ctxt /root/.ctxt 2>/dev/null; true",
+        timeout=10)
+    ssh_bg(UE_HOST,
+           f"cd {ctx_dir} && "
+           f"sudo HOME={ctx_dir} {SRSUE_BIN} {conf}"
+           f" --general.metrics_csv_enable=1"
+           f" --general.metrics_csv_filename={met_csv}"
+           f" --general.metrics_period_secs=1"
+           f" >> {log} 2>&1")
 
 
 def wait_gnb_port(n, timeout=25):
     port = 40000 + n * 10
     t0 = time.time()
     while time.time() - t0 < timeout:
-        out, _ = ssh(GNB_HOST, f"ss -unlp | grep ':{port} ' || true", timeout=5)
+        out, _ = ssh(GNB_HOST, f"ss -tnlp 2>/dev/null | grep ':{port} ' || true", timeout=5)
         if str(port) in out:
             return True
         time.sleep(1)
@@ -165,8 +181,12 @@ def inject_default_route(n):
 
 
 def setup_gtp_aliases(max_n=50):
+    print(f"  Setting up GTP alias IPs 10.10.2.1-{max_n} on pc802 (enp4s0f1)...")
     alias_script = f"for n in $(seq 1 {max_n}); do sudo ip addr add {GNB_GTP_BASE}.$n/24 dev {GNB_LAN_IF} 2>/dev/null || true; done; echo count=$(ip addr show {GNB_LAN_IF} | grep -c '{GNB_GTP_BASE}\.' || echo 0)"
-    ssh(GNB_HOST, alias_script, timeout=30)
+    out, _ = ssh(GNB_HOST, alias_script, timeout=30)
+    print(f"  {out.strip()}")
+
+    print(f"  Patching enb_ue*.conf: gtp_bind_addr → 10.10.2.n ...")
     patch_script = (
         f"for n in $(seq 1 {max_n}); do "
         f"  sudo sed -i \"s/^gtp_bind_addr.*/gtp_bind_addr = {GNB_GTP_BASE}.$n/\" "
@@ -174,13 +194,17 @@ def setup_gtp_aliases(max_n=50):
         f"done; "
         f"echo patched"
     )
-    ssh(GNB_HOST, patch_script, timeout=30)
+    out2, _ = ssh(GNB_HOST, patch_script, timeout=30)
+    print(f"  {out2.strip()}")
+
+    print(f"  Adding route 10.10.2.0/24 via 10.10.1.2 on pc808...")
     route_script = (
         f"sudo ip route add {GNB_GTP_BASE}.0/24 via 10.10.1.2 dev enp4s0f1 2>/dev/null || "
         f"sudo ip route change {GNB_GTP_BASE}.0/24 via 10.10.1.2 dev enp4s0f1 2>/dev/null || true; "
         f"echo route=$(ip route show | grep '{GNB_GTP_BASE}' | head -1)"
     )
-    ssh(CORE_HOST, route_script, timeout=15)
+    out3, _ = ssh(CORE_HOST, route_script, timeout=15)
+    print(f"  {out3.strip()}")
 
 
 def run_ping(n):
@@ -221,25 +245,49 @@ sudo systemctl restart open5gs-smfd   && sleep 2
     return False, None, 0
 
 
-def run_iperf(n, rate_mbps, direction="dl"):
+def ensure_iperf_server(n):
     port = 5200 + n
-    dur  = IPERF_DUR
-    if direction == "dl":
-        cmd = (f"sudo ip netns exec ue{n} "
-               f"iperf3 -c {CORE_IP} -u -b {rate_mbps}M -t {dur} -p {port} -R -J 2>/dev/null")
-    else:
-        cmd = (f"sudo ip netns exec ue{n} "
-               f"iperf3 -c {CORE_IP} -u -b {rate_mbps}M -t {dur} -p {port} -J 2>/dev/null")
-    out, _ = ssh(UE_HOST, cmd, timeout=dur + 15)
+    out, _ = ssh(CORE_HOST,
+                 f"ss -ulpn 2>/dev/null | grep -c ':{port} ' || ss -tulpn 2>/dev/null | grep -c ':{port} ' || echo 0",
+                 timeout=8)
+    if out.strip() != "0":
+        return
+    loop = (f"while true; do "
+            f"iperf3 -s -B {CORE_IP} -p {port} --one-off 2>/dev/null; "
+            f"sleep 0.2; done")
+    ssh_bg(CORE_HOST, loop)
+    time.sleep(1)
+
+
+def run_iperf(n, rate_mbps, direction="dl"):
+    """Run iperf3 from UE n netns. Returns (mbps, loss_pct)."""
+    ensure_iperf_server(n)
+    port = 5200 + n
+    flag = "-R" if direction == "dl" else ""
+    cmd  = (f"sudo ip netns exec ue{n} iperf3"
+            f" -c {CORE_IP} -p {port}"
+            f" -b {rate_mbps}M -t {IPERF_DUR} {flag} --json")
+    out, _ = ssh(UE_HOST, cmd, timeout=IPERF_DUR + 15)
+    if out == "TIMEOUT":
+        return 0.0, 100.0
     try:
-        data = json.loads(out)
-        end  = data.get("end", {})
-        if "sum" in end: s = end["sum"]
-        elif "sum_received" in end: s = end["sum_received"]
-        else: s = end.get("sum_sent", {})
-        mbps = round(s.get("bits_per_second", 0) / 1e6, 3)
-        loss = round(s.get("lost_percent", 0.0), 2)
-        return mbps, loss
+        dec    = json.JSONDecoder()
+        last_d = None
+        i = 0
+        while i < len(out):
+            try:
+                obj, idx = dec.raw_decode(out, i)
+                if isinstance(obj, dict) and "end" in obj:
+                    last_d = obj
+                i = idx
+            except json.JSONDecodeError:
+                i += 1
+        if last_d is None or last_d.get("error"):
+            return 0.0, 100.0
+        end  = last_d["end"]
+        key  = "sum_received" if direction == "dl" else "sum_sent"
+        mbps = round(end[key]["bits_per_second"] / 1e6, 4)
+        return mbps, 0.0
     except Exception:
         return 0.0, 100.0
 
@@ -827,13 +875,20 @@ def main():
                 f"iperf3 -s -B {CORE_IP} -p {port} --one-off 2>/dev/null; "
                 f"sleep 0.2; done")
         ssh_bg(CORE_HOST, loop)
+    print("  Waiting for iperf3 ports to bind...")
     time.sleep(8)
+    bound, _ = ssh(CORE_HOST,
+                   "ss -tnlp | grep -cE ':52[0-9]{2} ' || echo 0", timeout=8)
+    print(f"  iperf3 servers ready: {bound.strip()} ports listening")
 
+    print("Pre-creating netns ue1..ue50 and cleaning NAS contexts...")
     ssh(UE_HOST,
         "for n in $(seq 1 50); do sudo ip netns add ue$n 2>/dev/null || true; done; "
         "rm -f /users/saish/.ctxt /root/.ctxt 2>/dev/null; "
         "for n in $(seq 1 50); do rm -f /tmp/ue_ctx/ue$n/.ctxt 2>/dev/null; done; "
-        "mkdir -p /tmp/ue_ctx; ", timeout=40)
+        "mkdir -p /tmp/ue_ctx; "
+        "echo \"netns_ready:$(ip netns list | wc -l)\"",
+        timeout=40)
 
     n_attached = 0
 
@@ -853,13 +908,15 @@ def main():
         row = {"ver": "v25_10", "ue_id": n, "n_attached": n_attached}
 
         print(f"\n{'='*62}")
-        print(f"  UE {n:2d}/50  [{time.strftime('%H:%M:%S')}]  ({n_attached} UEs running)")
+        print(f"  UE {n:2d}/50  [{time.strftime('%H:%M:%S')}]"
+              f"  ({n_attached} UEs running)")
         print(f"{'='*62}")
 
         # 1. Start gNB
-        print(f"  Starting gNB {n}...")
+        print(f"  Starting srsenb {n}...")
         start_gnb_ue(n)
         port = 40000 + n * 10
+        print(f"  Waiting for gNB port {port}...")
         if not wait_gnb_port(n):
             print(f"  gNB port not bound — skipping UE{n}")
             row.update({"attach_ok": "FAIL_GNB", "attach_ms": 0, "ue_ip": "",
@@ -875,6 +932,7 @@ def main():
             row.update({k: 0.0 for k in GNBJ_FIELDS})
             append_row(row)
             continue
+        print(f"  gNB port {port} bound ✓")
 
         # 2. Start srsue
         print(f"  Starting srsue {n}...")
@@ -882,7 +940,9 @@ def main():
         time.sleep(2)
 
         # 3. Wait attach
+        print(f"  Waiting for attach (timeout={ATTACH_TIMEOUT}s)...")
         ue_ip, attach_ms = wait_attach(n)
+
         if not ue_ip:
             print(f"  ATTACH FAILED — UE{n} ({attach_ms}ms)")
             row.update({"attach_ok": "FAIL", "attach_ms": attach_ms, "ue_ip": "",
@@ -901,40 +961,59 @@ def main():
 
         n_attached += 1
         row["n_attached"] = n_attached
+        print(f"  Attached ✓  IP={ue_ip}  {attach_ms}ms  active={n_attached}")
         row.update({"attach_ok": "OK", "attach_ms": attach_ms, "ue_ip": ue_ip})
-        inject_default_route(n)
+
+        # 4. Inject default route
+        route_ok = inject_default_route(n)
+        print(f"  default route: {'injected ✓' if route_ok else 'WARNING — could not inject'}")
         time.sleep(PING_SETTLE_S)
 
-        # 4. Ping
+        # 5. Ping
+        print("  Ping...")
         p_avg, p_min, p_max, p_jit, p_loss = run_ping(n)
+        print(f"  ping avg={p_avg}ms loss={p_loss}%")
+
         if p_loss >= 100.0:
             healed, new_ip, new_ms = heal_upf(n)
             if healed:
                 if new_ip:
-                    ue_ip = new_ip; attach_ms = new_ms
+                    ue_ip = new_ip
+                    attach_ms = new_ms
                     row.update({"ue_ip": ue_ip, "attach_ms": attach_ms})
                 p_avg, p_min, p_max, p_jit, p_loss = run_ping(n)
+                print(f"  ping avg={p_avg}ms loss={p_loss}%")
+            else:
+                print(f"  [WARN] UPF heal failed UE{n} — writing row with loss=100, iperf skipped")
 
         row.update({"ping_avg_ms": p_avg, "ping_min_ms": p_min,
                      "ping_max_ms": p_max, "ping_jitter_ms": p_jit,
                      "ping_loss_pct": p_loss})
 
-        # 5. DL iperf
+        # 5. DL iperf — 18 rates
+        print("  DL iperf...")
         for r in DL_RATES:
-            if p_loss >= 100.0: mbps, loss = 0.0, 100.0
+            if p_loss >= 100.0:
+                mbps, loss = 0.0, 100.0
+                print(f"    DL {r:2d}M → skipped (ping loss=100%)")
             else:
                 mbps, loss = run_iperf(n, r, "dl")
+                print(f"    DL {r:2d}M → {mbps:.3f} Mbps  loss={loss}%")
                 time.sleep(1)
             row[f"dl_{r}m_mbps"] = mbps
             row[f"dl_{r}m_loss_pct"] = loss
 
-        # 6. UL iperf
+        # 6. UL iperf — 18 rates
+        print("  UL iperf...")
         ran_bg = {}; agg_bg = {}; gnbj_bg = {}; phy_bg = {}
         ul_snap_done = False
         for idx_r, r in enumerate(UL_RATES):
-            if p_loss >= 100.0: mbps, loss = 0.0, 100.0
+            if p_loss >= 100.0:
+                mbps, loss = 0.0, 100.0
+                print(f"    UL {r:2d}M → skipped (ping loss=100%)")
             else:
                 mbps, loss = run_iperf(n, r, "ul")
+                print(f"    UL {r:2d}M → {mbps:.3f} Mbps  loss={loss}%")
                 time.sleep(1)
                 if idx_r == 1 and not ul_snap_done:
                     def _snap_all():
@@ -950,11 +1029,42 @@ def main():
         if ul_snap_done:
             t.join(timeout=30)
 
-        row.update(ran_bg if ran_bg else snap_gnb_ran(n))
-        row.update(snap_gnb_metrics())
-        row.update(agg_bg if agg_bg else snap_gnb_agg(n))
-        row.update(gnbj_bg if gnbj_bg else snap_gnbj(n))
-        row.update(phy_bg if phy_bg else snap_ue_phy(n))
+        # 7. gNB RAN params
+        print("  gNB RAN params...")
+        ran = ran_bg if ran_bg else snap_gnb_ran(n)
+        print(f"  dl_mcs={ran.get('ran_dl_mcs', 0)}  ul_mcs={ran.get('ran_ul_mcs', 0)}"
+              f"  cqi={ran.get('ran_cqi', 0)}  sinr={ran.get('ran_pusch_sinr', 0)}dB")
+        row.update(ran)
+
+        # 8. gNB power / turbostat snapshot
+        print("  gNB power snapshot (turbostat)...")
+        snap = snap_gnb_metrics()
+        print(f"  pkg={snap.get('gnb_ts_pkg_watt', 0)}W(ts)"
+              f"  rapl={snap.get('gnb_rapl_total_w', 0)}W"
+              f"  busy={snap.get('gnb_ts_busy_pct', 0)}%"
+              f"  load={snap.get('gnb_load1', 0)}/{snap.get('gnb_load5', 0)}"
+              f"  CoreTmp={snap.get('gnb_ts_core_tmp', 0)}°C")
+        row.update(snap)
+
+        # 9. gNB metrics CSV aggregates
+        agg = agg_bg if agg_bg else snap_gnb_agg(n)
+        print(f"  gnb_agg: dl_peak={agg.get('gnb_dl_brate_peak_mbps', 0)}Mbps"
+              f"  n_samples={agg.get('gnb_sample_count', 0)}")
+        row.update(agg)
+
+        # 10. gNB report JSON averages
+        gnbj = gnbj_bg if gnbj_bg else snap_gnbj(n)
+        print(f"  gnbj: cqi={gnbj.get('gnbj_dl_cqi_avg', 0)}"
+              f"  dl_mcs={gnbj.get('gnbj_dl_mcs_avg', 0)}"
+              f"  n_samples={gnbj.get('gnbj_sample_count', 0)}")
+        row.update(gnbj)
+
+        # 11. UE PHY metrics
+        phy = phy_bg if phy_bg else snap_ue_phy(n)
+        print(f"  phy: dl_mcs_avg={phy.get('phy_dl_mcs_avg', 0)}"
+              f"  dl_snr_avg={phy.get('phy_dl_snr_avg', 0)}"
+              f"  rsrp={phy.get('phy_rsrp_avg', 0)}")
+        row.update(phy)
 
         append_row(row)
         print(f"  ✓ UE{n} saved (synced to Desktop).")

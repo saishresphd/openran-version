@@ -118,14 +118,27 @@ ssh("saish@pc808.emulab.net",
     "echo iperf3=$(pgrep iperf3 | wc -l | tr -d ' ')\n"
     "echo epc=$(systemctl is-active open5gs-mmed open5gs-smfd | tr '\\n' '/')")
 
-# 8. Wipe CSV completely so run_v22_50ue.py starts from UE1 with no resume
+# 8. Filter CSV to keep only good rows (UE1..UE32) so run_v22_50ue.py fast-attaches UE1..32 and measures UE33..50
 csv_path = pathlib.Path("results/ver_eval/v22_10/ue_results_50.csv")
 csv_path.parent.mkdir(parents=True, exist_ok=True)
-if csv_path.exists():
-    csv_path.unlink()
-    print(f"\n  CSV deleted — experiment will start fresh from UE1")
-else:
-    print(f"\n  CSV not found — will be created fresh by run_v22_50ue.py")
+if csv_path.exists() and csv_path.stat().st_size > 0:
+    import csv as pycsv
+    with open(csv_path, newline="") as f:
+        rows = list(pycsv.DictReader(f))
+    good_rows = []
+    for r in rows:
+        try:
+            ploss = float(r.get("ping_loss_pct", 100.0))
+        except ValueError:
+            ploss = 100.0
+        if r.get("attach_ok") == "OK" and ploss < 100.0 and int(r.get("ue_id", 0)) < 33:
+            good_rows.append(r)
+    with open(csv_path, "w", newline="") as f:
+        if good_rows:
+            w = pycsv.DictWriter(f, fieldnames=list(good_rows[0].keys()))
+            w.writeheader()
+            w.writerows(good_rows)
+    print(f"\n  CSV prepared with {len(good_rows)} valid rows (UE 1..32) for fast-attach resume")
 
 print("\n" + "=" * 60)
 print("  CLEAN SLATE DONE — launching v22.10 experiment")
@@ -134,10 +147,10 @@ print("=" * 60)
 # 9. Launch run_v22_50ue.py in background
 open("/tmp/run_v22_50ue.log", "w").close()
 exp = subprocess.Popen(
-    ["python3", "-u", "scripts/run_v22_50ue.py"],
+    ["python3", "-u", "scripts/working_v22/run_v22_50ue.py"],
     stdout=open("/tmp/run_v22_50ue.log", "a"),
     stderr=subprocess.STDOUT,
-    cwd=str(pathlib.Path(__file__).parent.parent)
+    cwd=str(pathlib.Path(__file__).parent.parent.parent)
 )
 print(f"\n  Experiment PID: {exp.pid}")
 print("  Monitor: tail -f /tmp/run_v22_50ue.log")

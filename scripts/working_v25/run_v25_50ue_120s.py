@@ -105,8 +105,11 @@ def start_gnb_ue(n):
     rpt_j   = f"{GNB_LOG_DIR}/enb_ue{n}_report.json"
     cmd = (f"mkdir -p {GNB_LOG_DIR} && "
            f"nohup sudo {SRSENB_BIN} {conf} "
+           f"--expert.metrics_csv_enable=1 "
            f"--expert.metrics_csv_filename={met_csv} "
-           f"--expert.metrics_json_filename={rpt_j} "
+           f"--expert.metrics_period_secs=1 "
+           f"--expert.report_json_enable=1 "
+           f"--expert.report_json_filename={rpt_j} "
            f"> {log} 2>&1 &")
     ssh(GNB_HOST, cmd, timeout=10)
 
@@ -118,7 +121,9 @@ def start_srsue(n):
     cmd = (f"mkdir -p {UE_LOG_DIR} /tmp/ue_ctx/ue{n} && "
            f"sudo ip netns add ue{n} 2>/dev/null || true; "
            f"nohup sudo ip netns exec ue{n} {SRSUE_BIN} {conf} "
+           f"--general.metrics_csv_enable=1 "
            f"--general.metrics_csv_filename={met_csv} "
+           f"--general.metrics_period_secs=1 "
            f"--nas.ctx_dir=/tmp/ue_ctx/ue{n} "
            f"> {log} 2>&1 &")
     ssh(UE_HOST, cmd, timeout=10)
@@ -128,7 +133,7 @@ def wait_gnb_port(n, timeout=25):
     port = 40000 + n * 10
     t0 = time.time()
     while time.time() - t0 < timeout:
-        out, _ = ssh(GNB_HOST, f"ss -unlp | grep ':{port} ' || true", timeout=5)
+        out, _ = ssh(GNB_HOST, f"ss -tnlp 2>/dev/null | grep ':{port} ' || true", timeout=5)
         if str(port) in out:
             return True
         time.sleep(1)
