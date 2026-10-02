@@ -40,6 +40,14 @@ source oaienv
 cd cmake_targets
 sudo ./build_oai -I --install-optional-packages
 
+# Patch lte-softmodem to avoid MBMS device contention across multiple eNB instances
+sudo python3 -c "
+p = '/opt/openairinterface5g/executables/lte-softmodem.c'
+with open(p, 'r') as f: c = f.read()
+c = c.replace('pdcp_initmask = pdcp_initmask | ENB_NAS_USE_TUN_W_MBMS_BIT;', '// pdcp_initmask = pdcp_initmask | ENB_NAS_USE_TUN_W_MBMS_BIT;')
+with open(p, 'w') as f: f.write(c)
+"
+
 # Build LTE softmodem with rfsimulator
 sudo ./build_oai -w SIMU --eNB --ninja -c
 sudo cp /opt/openairinterface5g/cmake_targets/ran_build/build/lte-softmodem /usr/local/bin/lte-softmodem || true
@@ -71,6 +79,14 @@ sudo git checkout 2024.w44 || sudo git checkout develop
 source oaienv
 cd cmake_targets
 sudo ./build_oai -I --install-optional-packages
+
+# Patch UE NAS layer to accept Open5GS non-consecutive TAC Attach Accept lists
+sudo python3 -c "
+p = '/opt/openairinterface5g/openair3/NAS/UE/EMM/SAP/emm_recv.c'
+with open(p, 'r') as f: c = f.read()
+c = c.replace('if (tai_list->typeoflist != 1)', 'if (0)')
+with open(p, 'w') as f: f.write(c)
+"
 
 # Build LTE UE softmodem with rfsimulator
 sudo ./build_oai -w SIMU --UE --ninja -c
