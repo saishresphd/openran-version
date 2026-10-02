@@ -40,8 +40,8 @@ source oaienv
 cd cmake_targets
 sudo ./build_oai -I --install-optional-packages
 
-# Build LTE softmodem with rfsimulator and telnetsrv
-sudo ./build_oai -w SIMU --eNB --telnetsrv --ninja -c
+# Build LTE softmodem with rfsimulator
+sudo ./build_oai -w SIMU --eNB --ninja -c
 sudo cp /opt/openairinterface5g/cmake_targets/ran_build/build/lte-softmodem /usr/local/bin/lte-softmodem || true
 
 echo "=== pc802 OAI eNB build complete ==="

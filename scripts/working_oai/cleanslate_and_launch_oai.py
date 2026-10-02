@@ -55,23 +55,20 @@ ssh("saish@pc808.emulab.net",
 # 4. Full EPC restart
 print("\n[4/5] Full EPC restart (pc808)...")
 ssh("saish@pc808.emulab.net",
-    "sudo systemctl restart open5gs-smfd   && sleep 3\n"
-    "sudo systemctl restart open5gs-upfd   && sleep 2\n"
-    "sudo systemctl restart open5gs-sgwud  && sleep 2\n"
-    "sudo systemctl restart open5gs-sgwcd  && sleep 2\n"
-    "sudo systemctl restart open5gs-mmed   && sleep 4\n"
-    "echo epc=$(systemctl is-active open5gs-mmed open5gs-smfd "
-    "open5gs-sgwcd open5gs-sgwud open5gs-upfd | tr '\\n' '/')",
-    timeout=35)
+    "sudo systemctl restart open5gs-mmed open5gs-smfd open5gs-sgwcd open5gs-sgwud open5gs-upfd 2>/dev/null; "
+    "echo epc=$(systemctl is-active open5gs-mmed open5gs-smfd open5gs-sgwcd open5gs-sgwud open5gs-upfd | tr '\\n' '/')",
+    timeout=15)
 
 # 5. Clean tun interfaces + netns on UE host
-print("\n[5/5] Cleaning tun interfaces (pc801)...")
+print("\n[5/5] Cleaning tun interfaces and veth pairs (pc801)...")
 ssh("saish@pc801.emulab.net",
     "for n in $(seq 1 50); do\n"
     "  sudo ip netns exec ue$n ip link delete oaitun_ue$n 2>/dev/null || true\n"
     "  sudo ip netns exec ue$n ip link delete tun_ue$n     2>/dev/null || true\n"
+    "  sudo ip link delete veth_h$n 2>/dev/null || true\n"
+    "  sudo ip netns delete ue$n 2>/dev/null || true\n"
     "done\n"
-    "echo tun_cleaned",
+    "echo tun_and_netns_cleaned",
     timeout=30)
 
 # 6. Clean old log files

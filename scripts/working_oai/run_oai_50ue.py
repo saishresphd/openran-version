@@ -14,7 +14,13 @@ Output: results/ver_eval/oai/ue_results_50.csv  — matching 170-column schema
   - Attach timeout: 600s
 """
 
-import subprocess, time, csv, os, re, json, pathlib, hashlib, shutil, signal, threading
+import subprocess, time, csv, os, re, json, pathlib, hashlib, shutil, signal, threading, sys, functools
+
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+print = functools.partial(print, flush=True)
 
 KEY      = os.path.expanduser("~/.ssh/id_ed25519")
 GNB_HOST = "saish@pc802.emulab.net"
@@ -69,10 +75,10 @@ def ssh_bg(host, cmd):
     rscript = f"/tmp/bg_{tag}.sh"
     upload  = ["ssh"] + SSH_ARGS + [host, f"cat > {rscript} && chmod +x {rscript}"]
     subprocess.run(upload, input=f"#!/bin/bash\n{cmd}\n",
-                   capture_output=True, text=True, timeout=12)
+                   capture_output=True, text=True, timeout=30)
     launcher = f"setsid bash {rscript} </dev/null >/dev/null 2>&1 & disown $! && exit 0"
     subprocess.run(["ssh"] + SSH_ARGS + [host, f"bash -c '{launcher}'"],
-                   capture_output=True, timeout=12)
+                   capture_output=True, timeout=30)
     time.sleep(0.5)
 
 
@@ -103,10 +109,11 @@ systemctl is-active open5gs-mmed open5gs-smfd open5gs-sgwcd open5gs-sgwud open5g
 
 
 def start_oai_enb(n):
+    port = 40000 + n * 10
     conf = f"{ENB_CONF_DIR}/enb_ue{n}.conf"
     log  = f"{GNB_LOG_DIR}/enb_ue{n}.log"
-    ssh(GNB_HOST, f"mkdir -p {GNB_LOG_DIR} && rm -f {log}", timeout=10)
-    cmd = f"sudo {OAI_ENB_BIN} -O {conf} --rfsim >> {log} 2>&1"
+    ssh(GNB_HOST, f"sudo mkdir -p {GNB_LOG_DIR} && sudo chmod 777 {GNB_LOG_DIR} && sudo rm -f {log}", timeout=10)
+    cmd = f"sudo {OAI_ENB_BIN} -O {conf} --rfsim --rfsimulator.[0].serveraddr server --rfsimulator.[0].serverport {port} >> {log} 2>&1"
     ssh_bg(GNB_HOST, cmd)
 
 
@@ -114,19 +121,22 @@ def wait_enb_port(n, timeout=30):
     port = 40000 + n * 10
     deadline = time.time() + timeout
     while time.time() < deadline:
-        out, _ = ssh(GNB_HOST, f"ss -tnlp 2>/dev/null | grep -c ':{port} ' || echo 0", timeout=10)
-        if out.strip() == "1":
+        out, _ = ssh(GNB_HOST, f"sudo ss -tnlp 2>/dev/null | grep -c ':{port} ' || echo 0", timeout=10)
+        if out.strip() in ("1", "2"):
             return True
         time.sleep(2)
     return False
 
 
 def start_oai_ue(n):
-    conf = f"{UE_CONF_DIR}/ue{n}.conf"
+    port = 40000 + n * 10
     log  = f"{UE_LOG_DIR}/ue{n}.log"
-    ssh(UE_HOST, f"mkdir -p {UE_LOG_DIR} && rm -f {log}", timeout=10)
-    cmd = (f"sudo ip netns exec ue{n} {OAI_UE_BIN} -O {conf} "
-           f"--rfsim --rfsimulator.serveraddr 10.10.1.2 -r 50 --nokrnmod 1 >> {log} 2>&1")
+    ctx_dir = f"/tmp/oai_ue_ctx/ue{n}"
+    ssh(UE_HOST, f"sudo mkdir -p {UE_LOG_DIR} {ctx_dir} && sudo chmod 777 {UE_LOG_DIR} {ctx_dir} && sudo rm -f {log}", timeout=10)
+    cmd = (f"cd {ctx_dir} && "
+           f"sudo ip netns exec ue{n} {OAI_UE_BIN} "
+           f"--rfsim --rfsimulator.[0].serveraddr 10.10.1.2 --rfsimulator.[0].serverport {port} "
+           f"-r 50 -C 2680000000 --ue-rxgain 115 --ue-txgain 90 >> {log} 2>&1")
     ssh_bg(UE_HOST, cmd)
 
 
@@ -149,16 +159,14 @@ def wait_attach(n, timeout=ATTACH_TIMEOUT):
 def inject_default_route(n):
     cmd = (
         f"DEV=$(sudo ip netns exec ue{n} ip -br a 2>/dev/null "
-        f"  | grep -E 'oaitun|tun' | awk '{{print $1}}' | head -1); "
+        f"  | grep -E 'oaitun_ue[0-9]+' | awk '{{print $1}}' | head -1); "
         f"if [ -n \"$DEV\" ]; then "
-        f"  sudo ip netns exec ue{n} ip route del 10.45.0.0/24 dev $DEV 2>/dev/null || true; "
-        f"  sudo ip netns exec ue{n} ip route add 10.45.0.1/32 dev $DEV 2>/dev/null || true; "
-        f"  sudo ip netns exec ue{n} ip route add default via 10.45.0.1 dev $DEV 2>/dev/null || true; "
+        f"  sudo ip netns exec ue{n} ip route add 10.45.0.1 dev $DEV 2>/dev/null || true; "
         f"  sudo ip netns exec ue{n} ip route show 2>/dev/null; "
         f"fi"
     )
     out, _ = ssh(UE_HOST, cmd, timeout=12)
-    return "10.45.0.1" in out and "default" in out
+    return "10.45.0.1" in out
 
 
 def run_ping(n, count=None):
@@ -187,12 +195,12 @@ def ensure_iperf_server(n):
     time.sleep(1)
 
 
-def run_iperf(n, rate_mbps, direction="dl"):
+def run_iperf(n, ue_ip, rate_mbps, direction="dl"):
     """Run standard TCP iperf3 from UE netns."""
     ensure_iperf_server(n)
     port = 5200 + n
     flag = "-R" if direction == "dl" else ""
-    cmd  = f"sudo ip netns exec ue{n} iperf3 -c {CORE_IP} -p {port} -b {rate_mbps}M -t {IPERF_DUR} {flag} --json"
+    cmd  = f"sudo ip netns exec ue{n} iperf3 -c {CORE_IP} -B {ue_ip} -p {port} -b {rate_mbps}M -t {IPERF_DUR} {flag} --json"
     out, _ = ssh(UE_HOST, cmd, timeout=IPERF_DUR + 15)
     if out == "TIMEOUT":
         return 0.0, 100.0
@@ -453,8 +461,29 @@ def main():
     kill_all()
     restart_epc()
 
-    # Pre-create netns
-    ssh(UE_HOST, "for n in $(seq 1 50); do sudo ip netns add ue$n 2>/dev/null || true; done", timeout=20)
+    # Pre-create netns and veth pairs for routing to rfsimulator
+    print("  Setting up UE netns and veth routing on pc801...")
+    netns_setup_script = """
+sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null
+for n in $(seq 1 50); do
+  sudo ip netns exec ue$n ip link delete oaitun_ue$n 2>/dev/null || true
+  sudo ip netns exec ue$n ip link delete tun_ue$n     2>/dev/null || true
+  sudo ip link delete veth_h$n 2>/dev/null || true
+  sudo ip netns delete ue$n 2>/dev/null || true
+
+  sudo ip netns add ue$n 2>/dev/null || true
+  sudo ip link add veth_ue$n type veth peer name veth_h$n 2>/dev/null || true
+  sudo ip link set veth_ue$n netns ue$n 2>/dev/null || true
+  sudo ip addr add 10.200.${n}.1/24 dev veth_h$n 2>/dev/null || true
+  sudo ip link set veth_h$n up 2>/dev/null || true
+  sudo ip netns exec ue$n ip addr add 10.200.${n}.2/24 dev veth_ue$n 2>/dev/null || true
+  sudo ip netns exec ue$n ip link set veth_ue$n up 2>/dev/null || true
+  sudo ip netns exec ue$n ip link set lo up 2>/dev/null || true
+  sudo ip netns exec ue$n ip route add default via 10.200.${n}.1 2>/dev/null || true
+  sudo iptables -t nat -C POSTROUTING -s 10.200.${n}.0/24 -o enp4s0f1 -j MASQUERADE 2>/dev/null || sudo iptables -t nat -A POSTROUTING -s 10.200.${n}.0/24 -o enp4s0f1 -j MASQUERADE
+done
+"""
+    ssh(UE_HOST, netns_setup_script, timeout=60)
 
     # Initialize CSV header
     with open(OUT_FILE, "w", newline="") as f:
@@ -520,7 +549,7 @@ def main():
             if p_loss >= 100.0:
                 mbps, loss = 0.0, 100.0
             else:
-                mbps, loss = run_iperf(n, r, "dl")
+                mbps, loss = run_iperf(n, ue_ip, r, "dl")
                 time.sleep(1)
             row[f"dl_{r}m_mbps"] = mbps
             row[f"dl_{r}m_loss_pct"] = loss
@@ -532,7 +561,7 @@ def main():
             if p_loss >= 100.0:
                 mbps, loss = 0.0, 100.0
             else:
-                mbps, loss = run_iperf(n, r, "ul")
+                mbps, loss = run_iperf(n, ue_ip, r, "ul")
                 time.sleep(1)
             row[f"ul_{r}m_mbps"] = mbps
             row[f"ul_{r}m_loss_pct"] = loss
