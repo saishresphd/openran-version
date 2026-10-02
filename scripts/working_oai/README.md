@@ -6,30 +6,40 @@ This directory contains the complete end-to-end automation suite for deploying, 
 
 ## Architecture & Topology
 
-- **Core / EPC (`pc808` - `10.10.1.1`)**: Open5GS EPC (MME, SGW-C, SGW-U, SMF, UPF).
-- **eNodeB Host (`pc802` - `10.10.1.2`)**: OAI 4G `lte-softmodem` (Band 7, 50 PRB / 10 MHz, RFsimulator TCP server).
-- **UE Host (`pc801` - `10.10.1.4`)**: OAI 4G `lte-uesoftmodem` (50 UEs in network namespaces `ue1`..`ue50` connected via RFsimulator client sockets).
+| Node Name | Node Hostname / IP | Role / Component |
+|:---|:---|:---|
+| **Control Host** | Local Workstation / Laptop | Orchestrates scripts via SSH key `~/.ssh/id_ed25519` |
+| **Core Node** | `pc808.emulab.net` (`10.10.1.1`) | Open5GS EPC (MME, SGW-C, SGW-U, SMF, UPF) + iperf3 server |
+| **eNB Host** | `pc802.emulab.net` (`10.10.1.2`) | OAI 4G `lte-softmodem` (Band 7, 50 PRB / 10 MHz, RFsimulator TCP server) |
+| **UE Host** | `pc801.emulab.net` (`10.10.1.4`) | OAI 4G `lte-uesoftmodem` (50 UEs in network namespaces `ue1`..`ue50`) |
 
 ---
 
 ## Step-by-Step Execution Guide
 
+> **Note on Execution Location:**
+> All commands below are designed to be run from the **root directory of the `openran-version` repository on your local Control Host** (`/Users/.../playground/` or repository root).
+> The orchestration scripts connect over SSH to `pc808`, `pc802`, and `pc801` automatically.
+
+---
+
 ### Step 1: Install Dependencies, Apply Patches & Build OAI
-Run the automated installation and compilation script from your control machine:
+**Where to run:** On the **Control Host** (repository root)
 ```bash
 bash scripts/working_oai/install_and_build_oai.sh
 ```
 **What this does automatically:**
-1. Installs all required OS and build toolchains (`cmake`, `ninja-build`, `libboost-all-dev`, `libzmq3-dev`, `libsctp-dev`, `ccache`, `libconfig-dev`, `libatlas-base-dev`) on both `pc802` and `pc801`.
-2. Clones OpenAirInterface at `/opt/openairinterface5g` and checks out the stable build tag.
-3. **Applies eNB MBMS Patch**: Disables unconditional `ENB_NAS_USE_TUN_W_MBMS_BIT` in `executables/lte-softmodem.c` to avoid device contention on `oaitun_enm1` during multi-instance execution.
-4. **Applies UE NAS TAI Patch**: Updates `openair3/NAS/UE/EMM/SAP/emm_recv.c` to accept Open5GS non-consecutive TAC Attach Accept lists (`cause=99` fix).
-5. Compiles `lte-softmodem` (on `pc802`) and `lte-uesoftmodem` (on `pc801`) with RFsimulator support.
+1. Connects to `pc802` (eNB) and `pc801` (UE) over SSH.
+2. Installs all required OS and build toolchains (`cmake`, `ninja-build`, `libboost-all-dev`, `libzmq3-dev`, `libsctp-dev`, `ccache`, `libconfig-dev`, `libatlas-base-dev`).
+3. Clones OpenAirInterface at `/opt/openairinterface5g` and checks out the stable build tag.
+4. **Applies eNB MBMS Patch on `pc802`**: Disables unconditional `ENB_NAS_USE_TUN_W_MBMS_BIT` in `executables/lte-softmodem.c` to avoid device contention on `oaitun_enm1` during multi-instance execution.
+5. **Applies UE NAS TAI Patch on `pc801`**: Updates `openair3/NAS/UE/EMM/SAP/emm_recv.c` to accept Open5GS non-consecutive TAC Attach Accept lists (`cause=99` fix).
+6. Compiles `lte-softmodem` (on `pc802`) and `lte-uesoftmodem` (on `pc801`) with RFsimulator support.
 
 ---
 
 ### Step 2: Generate & Deploy 50 eNB and 50 UE Configurations
-Generate and install the configuration files and USIM NVRAM records:
+**Where to run:** On the **Control Host** (repository root)
 ```bash
 python3 scripts/working_oai/gen_configs_oai.py
 ```
@@ -43,12 +53,18 @@ python3 scripts/working_oai/gen_configs_oai.py
 ---
 
 ### Step 3: Launch Clean-Slate 50-UE Experiment
-Run the clean-slate launcher to teardown any existing processes, reset EPC, prepare network namespaces with routing (`10.200.{n}.0/24`), and execute the 50-UE accumulation sweep:
+**Where to run:** On the **Control Host** (repository root)
 ```bash
 python3 scripts/working_oai/cleanslate_and_launch_oai.py
 ```
+**What this does automatically:**
+- Kills any stale processes on `pc802`, `pc801`, and `pc808`.
+- Restarts Open5GS EPC services on `pc808`.
+- Pre-creates network namespaces `ue1`..`ue50` on `pc801` with isolated veth routing (`10.200.{n}.0/24`) and NAT rules.
+- Launches the 50-UE accumulation sweep in the background.
 
-#### Monitor Live Progress
+#### How to Monitor Live Progress
+**Where to run:** On the **Control Host**
 ```bash
 tail -f /tmp/run_oai_50ue.log
 ```
@@ -56,27 +72,52 @@ tail -f /tmp/run_oai_50ue.log
 ---
 
 ### Step 4: Post-Collection Metrics & MCS Backfill
-Once the sweep completes (or as UEs finish), execute the batch backfill script to enrich the dataset with full PHY/MAC MCS and RAN parameters extracted from the host execution logs:
+**Where to run:** On the **Control Host** (repository root)
 ```bash
 python3 scripts/working_oai/backfill_oai_mcs.py
 ```
+**What this does:**
+- Queries `pc801` execution logs in batch mode.
+- Extracts scheduled DL/UL MCS, CQI, SINR, and PHR metrics.
+- Populates all 177 columns in `results/ver_eval/oai/ue_results_50.csv` and mirrors to `~/Desktop/oai_ue_results_50.csv`.
 
 ---
 
 ### Step 5 (Optional): Single-UE Targeted Retest
-If any UE experiences random wireless contention during attach, retest without re-running the entire sweep:
+**Where to run:** On the **Control Host** (repository root)
 ```bash
 python3 scripts/working_oai/rerun_failed_oai_ues.py
 ```
+Use this if an individual UE encountered transient contention during initial attach.
 
 ---
 
 ## Dynamic Load Balancing (BPEA-LB)
 
-To evaluate and test the **Bounded-Performance Energy-Aware Dynamic Load Balancing (BPEA-LB)** algorithm across gNodeBs:
+**Where to run:** On the **Control Host** (repository root)
 ```bash
 python3 scripts/working_oai/bpea_load_balancing.py
 ```
+Evaluates the **Bounded-Performance Energy-Aware Dynamic Load Balancing (BPEA-LB)** algorithm across gNodeBs using dynamic entropy-based feature weights and critical bulk migration thresholds.
+
+---
+
+## Direct Node SSH Reference (For Manual Inspection)
+
+If you need to log directly into any of the POWDER nodes to inspect logs or interfaces:
+
+- **Core Node**:
+  ```bash
+  ssh -i ~/.ssh/id_ed25519 saish@pc808.emulab.net
+  ```
+- **eNodeB Node**:
+  ```bash
+  ssh -i ~/.ssh/id_ed25519 saish@pc802.emulab.net
+  ```
+- **UE Host Node**:
+  ```bash
+  ssh -i ~/.ssh/id_ed25519 saish@pc801.emulab.net
+  ```
 
 ---
 
