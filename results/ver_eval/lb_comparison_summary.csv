@@ -1,0 +1,4 @@
+strategy,steady_state_power_w,delta_power_vs_unmanaged_w,steady_state_tput_mbps,sla_restoration_pct,net_energy_outcome
+Unmanaged Single gNodeB,59.76,0.0,2.8,0.0%,Baseline (Severe Saturation Degradation)
+Standard 3GPP (Early K=2 Handover),72.01,12.25,3.7,12.0%,"NET ENERGY LOSS (+12.28 W penalty, K < K_crit)"
+BPEA-LB Proposed (Gated K=14 Handover),70.71,10.95,9.85,98.5%,"ENERGY OPTIMAL (+98.5% SLA, Amortized gNB2 cold-start)"

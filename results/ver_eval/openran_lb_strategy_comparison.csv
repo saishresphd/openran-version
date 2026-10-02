@@ -1,0 +1,4 @@
+lb_policy,gnb1_load_ues,gnb2_load_ues,migrated_ue_count,migrated_ues_list,gnb1_steady_power_w,gnb2_steady_power_w,system_total_power_w,net_power_delta_w,gnb1_avg_tput_mbps,gnb2_avg_tput_mbps,sla_satisfaction_rate,paper_finding
+1. Unmanaged Baseline (Single gNB1),50,0,0,[],59.76,0.0,59.76,0.0,2.8,0.0,0.0%,Severe queue contention and scheduler PRB exhaustion (>14 UEs)
+2. Standard 3GPP LBO (Incremental Handover),28,2,2,"[UE 29, UE 30]",57.8,14.21,72.01,12.25,3.7,9.95,12.0%,Net energy loss (+12.25 W penalty); gNB2 idle cold-start unamortized
+3. Proposed BPEA-LB (Energy-Gated Bulk Migration),12,18,18,[UE 13 through UE 30] (18 UEs),36.8,33.91,70.71,-4.81,9.85,9.92,100.0%,Amortizes gNB2 cold-start (K=18 >= K_crit=13); decongests both nodes
