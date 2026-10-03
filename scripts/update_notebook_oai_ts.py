@@ -11,8 +11,8 @@ Updates openran_load_balancing_evaluation.ipynb with:
 
 import json, os, pathlib, shutil
 
-NB_PATH   = pathlib.Path("openran_load_balancing_evaluation.ipynb")
-DESK_PATH = pathlib.Path(os.path.expanduser("~/Desktop/openran_load_balancing_evaluation.ipynb"))
+NB_PATH   = pathlib.Path("openran_load_balancing_timeseries.ipynb")
+DESK_PATH = pathlib.Path(os.path.expanduser("~/Desktop/openran_load_balancing_timeseries.ipynb"))
 
 def update_notebook():
     with open(NB_PATH, "r", encoding="utf-8") as f:
