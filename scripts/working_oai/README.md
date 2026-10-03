@@ -126,6 +126,10 @@ If you need to log directly into any of the POWDER nodes to inspect logs or inte
 All results are automatically flushed and synced to:
 - **Repository CSV**: [`results/ver_eval/oai/ue_results_50.csv`](../../results/ver_eval/oai/ue_results_50.csv)
 - **Local Desktop Mirror**: `~/Desktop/oai_ue_results_50.csv`
+- **LB Comparison Time-Series CSV**: [`results/ver_eval/lb_comparison_time_series.csv`](../../results/ver_eval/lb_comparison_time_series.csv)
+- **LB Comparison Strategy Summary CSV**: [`results/ver_eval/lb_comparison_summary.csv`](../../results/ver_eval/lb_comparison_summary.csv)
+- **3GPP Baseline LB Results CSV**: [`results/ver_eval/baseline_3gpp_lb_results.csv`](../../results/ver_eval/baseline_3gpp_lb_results.csv)
+- **3GPP Baseline LB Experiment Script**: [`scripts/working_oai/run_3gpp_baseline_lb_experiment.py`](run_3gpp_baseline_lb_experiment.py)
 
 ### Metrics Captured (177 Columns):
 - **Attach Profile**: `attach_ms`, `attach_ok`, `ue_ip`.
