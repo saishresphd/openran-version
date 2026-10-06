@@ -1,0 +1,55 @@
+# srsRAN Project gNB — 5G SA, ZMQ virtual RF
+# Node: gnb1 (pc802), LAN IP: 10.10.1.2
+# Core AMF: core (pc808), LAN IP: 10.10.1.1
+# UE: uehost1 (pc801), LAN IP: 10.10.1.4
+#
+# Start: sudo gnb -c /etc/srsran/gnb_zmq.yaml
+# Build: cmake with -DENABLE_ZEROMQ=ON -DENABLE_EXPORT=ON
+
+cu_cp:
+  amf:
+    addr: 10.10.1.1          # Open5GS AMF NGAP address (core node)
+    bind_addr: 10.10.1.2     # gnb1 local bind address
+    supported_tracking_areas:
+      - tac: 7
+        plmn_list:
+          - plmn: "00101"    # MCC=001, MNC=01
+            tai_slice_support_list:
+              - sst: 1
+  inactivity_timer: 7200
+
+cell_cfg:
+  dl_arfcn: 368500           # NR Band n3 (FDD), DL centre: 1842.5 MHz
+  band: 3
+  channel_bandwidth_MHz: 10  # 52 PRBs
+  common_scs: 15kHz          # srsUE NR mode requires 15 kHz SCS (FDD only)
+  plmn: "00101"
+  tac: 7
+  pci: 1
+  pdcch:
+    common:
+      ss0_index: 0
+      coreset0_index: 12     # Must match srsUE CORESET0 capability
+    dedicated:
+      ss2_type: common
+      dci_format_0_1_and_1_1: false   # srsUE fallback DCI format
+  prach:
+    prach_config_index: 1    # srsUE expects config index 1
+
+ru_sdr:
+  device_driver: zmq
+  # gnb1 binds both ports; uehost1 connects to these addresses
+  device_args: tx_port=tcp://10.10.1.2:2000,rx_port=tcp://10.10.1.2:2001,base_srate=11.52e6
+  srate: 11.52               # 11.52 MHz = correct sample rate for 10 MHz / 52 PRBs
+  tx_gain: 75
+  rx_gain: 75
+
+log:
+  filename: /tmp/gnb1_srsran.log
+  all_level: info
+
+pcap:
+  mac_enable: false
+  mac_filename: /tmp/gnb1_mac.pcap
+  ngap_enable: false
+  ngap_filename: /tmp/gnb1_ngap.pcap
